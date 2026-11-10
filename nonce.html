@@ -1,0 +1,436 @@
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulation Blockchain et SHA-256</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  font-family: Arial, sans-serif;
+  background: #101827;
+  color: white;
+  padding: 25px;
+  margin: 0;
+}
+
+h1, h2 { color: #f7931a; }
+
+.container {
+  max-width: 950px;
+  margin: auto;
+}
+
+.panel, .block {
+  background: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 12px;
+  padding: 20px;
+  margin: 18px 0;
+}
+
+input, textarea, button {
+  padding: 11px;
+  border-radius: 7px;
+  border: none;
+  font-size: 15px;
+  margin: 5px 0;
+}
+
+input, textarea {
+  width: 100%;
+  background: #0f172a;
+  color: white;
+  border: 1px solid #64748b;
+}
+
+button {
+  background: #f7931a;
+  color: #111827;
+  font-weight: bold;
+  cursor: pointer;
+  margin-right: 6px;
+}
+
+button:hover { opacity: .85; }
+
+.secondary { background: #64748b; color: white; }
+.danger { background: #dc2626; color: white; }
+
+.hash {
+  background: #0b1220;
+  color: #60a5fa;
+  padding: 10px;
+  overflow-wrap: anywhere;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 13px;
+}
+
+.valid { color: #4ade80; font-weight: bold; }
+.invalid { color: #f87171; font-weight: bold; }
+.transaction {
+  background: #334155;
+  padding: 9px;
+  border-radius: 6px;
+  margin: 6px 0;
+}
+
+.block {
+  border-left: 5px solid #f7931a;
+}
+
+small { color: #cbd5e1; }
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<h1>⛓ Simulation interactive de la Blockchain</h1>
+<p>Transactions, SHA-256, Nonce et Proof of Work</p>
+
+<div class="panel">
+  <h2>1. Ajouter une transaction</h2>
+
+  <input id="sender" placeholder="Expéditeur (ex : Alice)">
+  <input id="receiver" placeholder="Destinataire (ex : Bob)">
+  <input id="amount" type="number" min="0.01" step="0.01"
+         placeholder="Montant (ex : 10 BTC)">
+
+  <button onclick="addTransaction()">Ajouter la transaction</button>
+
+  <h3>Transactions en attente :</h3>
+  <div id="pending">Aucune transaction.</div>
+</div>
+
+<div class="panel">
+  <h2>2. Données à hasher</h2>
+  <p>Tu peux aussi saisir un message libre :</p>
+
+  <textarea id="message" rows="3"
+    placeholder="Écris ton message ici..."></textarea>
+
+  <button onclick="hashMessage()">Calculer SHA-256</button>
+  <div class="hash" id="messageHash">Le hash apparaîtra ici.</div>
+</div>
+
+<div class="panel">
+  <h2>3. Blockchain</h2>
+  <p>Chaque bloc contient des transactions, un Nonce et le hash du bloc précédent.</p>
+  <button onclick="mineBlock()">⛏ Miner un nouveau bloc</button>
+  <button class="secondary" onclick="verifyChain()">Vérifier la blockchain</button>
+  <div id="chain"></div>
+  <p id="chainStatus"></p>
+</div>
+
+<div class="panel">
+  <h2>4. Simulation du Nonce</h2>
+  <p>Teste différentes valeurs de Nonce pour le message ci-dessous.</p>
+
+  <input id="nonceMessage"
+    value="Transaction Alice vers Bob : 10 BTC">
+
+  <label>Nonce :</label>
+  <input type="number" id="nonce" value="0" min="0">
+
+  <button onclick="calculateNonce()">Calculer le hash</button>
+  <button onclick="findNonce()">Trouver automatiquement</button>
+
+  <p class="hash" id="nonceHash">Hash en attente...</p>
+  <p id="nonceStatus"></p>
+  <p>Nombre d'essais : <strong id="attempts">0</strong></p>
+</div>
+
+</div>
+
+<script>
+const DIFFICULTY = "000";
+let pending = [];
+
+let blockchain = [{
+  index: 0,
+  transactions: ["Bloc Genesis : création de la blockchain"],
+  previousHash: "0",
+  nonce: 0,
+  hash: ""
+}];
+
+async function sha256(text) {
+  const data = new TextEncoder().encode(text);
+  const result = await crypto.subtle.digest("SHA-256", data);
+
+  return Array.from(new Uint8Array(result))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function blockData(block) {
+  return JSON.stringify({
+    index: block.index,
+    transactions: block.transactions,
+    previousHash: block.previousHash,
+    nonce: block.nonce
+  });
+}
+
+async function calculateBlockHash(block) {
+  return await sha256(blockData(block));
+}
+
+async function initialize() {
+  blockchain[0].hash = await calculateBlockHash(blockchain[0]);
+  renderChain();
+}
+
+function addTransaction() {
+  const sender = document.getElementById("sender").value.trim();
+  const receiver = document.getElementById("receiver").value.trim();
+  const amount = document.getElementById("amount").value;
+
+  if (!sender || !receiver || !amount || Number(amount) <= 0) {
+    alert("Remplis correctement les trois champs.");
+    return;
+  }
+
+  pending.push(`${sender} envoie ${amount} BTC à ${receiver}`);
+
+  document.getElementById("sender").value = "";
+  document.getElementById("receiver").value = "";
+  document.getElementById("amount").value = "";
+
+  renderPending();
+}
+
+function renderPending() {
+  const area = document.getElementById("pending");
+
+  area.innerHTML = "";
+
+  if (pending.length === 0) {
+    area.textContent = "Aucune transaction.";
+    return;
+  }
+
+  pending.forEach((transaction, i) => {
+    const div = document.createElement("div");
+    div.className = "transaction";
+    div.textContent = (i + 1) + ". " + transaction;
+    area.appendChild(div);
+  });
+}
+
+async function hashMessage() {
+  const message = document.getElementById("message").value;
+  const hash = await sha256(message);
+
+  document.getElementById("messageHash").textContent = hash;
+}
+
+async function mineBlock() {
+  if (pending.length === 0) {
+    alert("Ajoute au moins une transaction avant de miner.");
+    return;
+  }
+
+  const transactions = [...pending];
+  const previousHash = blockchain[blockchain.length - 1].hash;
+
+  const block = {
+    index: blockchain.length,
+    transactions: transactions,
+    previousHash: previousHash,
+    nonce: 0,
+    hash: ""
+  };
+
+  const button = document.querySelector(
+    'button[onclick="mineBlock()"]'
+  );
+
+  button.disabled = true;
+  button.textContent = "Minage en cours...";
+
+  while (true) {
+    block.hash = await calculateBlockHash(block);
+
+    if (block.hash.startsWith(DIFFICULTY)) {
+      break;
+    }
+
+    block.nonce++;
+
+    if (block.nonce % 100 === 0) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+
+  blockchain.push(block);
+  pending = [];
+
+  renderPending();
+  renderChain();
+
+  button.disabled = false;
+  button.textContent = "⛏ Miner un nouveau bloc";
+}
+
+function renderChain() {
+  const area = document.getElementById("chain");
+  area.innerHTML = "";
+
+  blockchain.forEach(block => {
+    const div = document.createElement("div");
+    div.className = "block";
+
+    const title = document.createElement("h3");
+    title.textContent = "Bloc " + block.index;
+    div.appendChild(title);
+
+    const txTitle = document.createElement("p");
+    txTitle.textContent = "Transactions :";
+    div.appendChild(txTitle);
+
+    block.transactions.forEach(tx => {
+      const p = document.createElement("div");
+      p.className = "transaction";
+      p.textContent = tx;
+      div.appendChild(p);
+    });
+
+    const nonce = document.createElement("p");
+    nonce.textContent = "Nonce : " + block.nonce;
+    div.appendChild(nonce);
+
+    const previous = document.createElement("p");
+    previous.textContent = "Hash précédent :";
+    div.appendChild(previous);
+
+    const previousHash = document.createElement("div");
+    previousHash.className = "hash";
+    previousHash.textContent = block.previousHash;
+    div.appendChild(previousHash);
+
+    const hashTitle = document.createElement("p");
+    hashTitle.textContent = "Hash du bloc :";
+    div.appendChild(hashTitle);
+
+    const hash = document.createElement("div");
+    hash.className = "hash";
+    hash.textContent = block.hash;
+    div.appendChild(hash);
+
+    // Permet de modifier une transaction pour tester la casse
+    if (block.index > 0) {
+      const edit = document.createElement("button");
+      edit.className = "danger";
+      edit.textContent = "Modifier une transaction";
+      edit.onclick = () => editBlock(block.index);
+      div.appendChild(edit);
+    }
+
+    area.appendChild(div);
+  });
+}
+
+async function verifyChain() {
+  const status = document.getElementById("chainStatus");
+  status.textContent = "Vérification en cours...";
+
+  let valid = true;
+
+  for (let i = 0; i < blockchain.length; i++) {
+    const block = blockchain[i];
+    const recalculated = await calculateBlockHash(block);
+
+    if (recalculated !== block.hash ||
+        !block.hash.startsWith(DIFFICULTY)) {
+      valid = false;
+      break;
+    }
+
+    if (i > 0 &&
+        block.previousHash !== blockchain[i - 1].hash) {
+      valid = false;
+      break;
+    }
+  }
+
+  status.innerHTML = valid
+    ? "<span class='valid'>✓ Blockchain valide : tous les blocs sont corrects.</span>"
+    : "<span class='invalid'>✗ Blockchain invalide : une modification a été détectée !</span>";
+}
+
+async function editBlock(index) {
+  const block = blockchain[index];
+
+  const newValue = prompt(
+    "Modifie la première transaction :",
+    block.transactions[0]
+  );
+
+  if (newValue === null) return;
+
+  block.transactions[0] = newValue;
+
+  // On ne recalcule pas les hashes suivants :
+  // cela permet de montrer la rupture de la chaîne.
+  renderChain();
+  verifyChain();
+}
+
+async function calculateNonce() {
+  const message = document.getElementById("nonceMessage").value;
+  const nonce = document.getElementById("nonce").value;
+
+  const hash = await sha256(message + " | Nonce: " + nonce);
+
+  document.getElementById("nonceHash").textContent = hash;
+
+  document.getElementById("nonceStatus").innerHTML =
+    hash.startsWith(DIFFICULTY)
+      ? "<span class='valid'>Nonce valide !</span>"
+      : "<span class='invalid'>Nonce non valide. Essaie encore.</span>";
+}
+
+async function findNonce() {
+  const message = document.getElementById("nonceMessage").value;
+  const status = document.getElementById("nonceStatus");
+  const hashArea = document.getElementById("nonceHash");
+
+  let nonce = 0;
+  let hash = "";
+
+  status.textContent = "Recherche du bon Nonce...";
+
+  while (nonce < 1000000) {
+    hash = await sha256(message + " | Nonce: " + nonce);
+
+    document.getElementById("nonce").value = nonce;
+    document.getElementById("attempts").textContent = nonce + 1;
+    hashArea.textContent = hash;
+
+    if (hash.startsWith(DIFFICULTY)) {
+      status.innerHTML =
+        "<span class='valid'>✓ Nonce trouvé : " + nonce + "</span>";
+      return;
+    }
+
+    nonce++;
+
+    if (nonce % 100 === 0) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+
+  status.textContent = "Limite atteinte. Réessaie.";
+}
+
+initialize();
+</script>
+
+</body>
+</html>
